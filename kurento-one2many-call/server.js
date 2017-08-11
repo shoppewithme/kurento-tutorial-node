@@ -55,8 +55,8 @@ var noPresenterMessage = 'No active presenter. Try again later...';
 var asUrl = url.parse(argv.as_uri);
 var port = asUrl.port;
 var server = https.createServer(options, app).listen(port, function() {
-    console.log('Kurento Tutorial started');
-    console.log('Open ' + url.format(asUrl) + ' with a WebRTC capable browser');
+    // console.log('Kurento Tutorial started');
+    // console.log('Open ' + url.format(asUrl) + ' with a WebRTC capable browser');
 });
 
 var wss = new ws.Server({
@@ -75,25 +75,25 @@ function nextUniqueId() {
 wss.on('connection', function(ws) {
 
 	var sessionId = nextUniqueId();
-	console.log('Connection received with sessionId ' + sessionId);
+	// console.log(new Date().toString(), 'Connection received with sessionId ' + sessionId);
 
     ws.on('error', function(error) {
-        console.log('Connection ' + sessionId + ' error');
+        // console.log('Connection ' + sessionId + ' error');
         stop(sessionId);
     });
 
     ws.on('close', function() {
-        console.log('Connection ' + sessionId + ' closed');
+        // console.log('Connection ' + sessionId + ' closed');
         stop(sessionId);
     });
 
     ws.on('message', function(_message) {
         var message = JSON.parse(_message);
-        console.log('Connection ' + sessionId + ' received message ', message);
+        // console.log('Connection ' + sessionId + ' received message ', message);
 
         switch (message.id) {
         case 'presenter':
-			startPresenter(sessionId, ws, message.sdpOffer, function(error, sdpAnswer) {
+			startPresenter(sessionId, ws, message.sdpOffer, message.rtpSdp, function(error, sdpAnswer) {
 				if (error) {
 					return ws.send(JSON.stringify({
 						id : 'presenterResponse',
@@ -157,7 +157,7 @@ function getKurentoClient(callback) {
 
     kurento(argv.ws_uri, function(error, _kurentoClient) {
         if (error) {
-            console.log("Could not find media server at address " + argv.ws_uri);
+            // console.log("Could not find media server at address " + argv.ws_uri);
             return callback("Could not find media server at address" + argv.ws_uri
                     + ". Exiting with error " + error);
         }
@@ -167,7 +167,7 @@ function getKurentoClient(callback) {
     });
 }
 
-function startPresenter(sessionId, ws, sdpOffer, callback) {
+function startPresenter(sessionId, ws, sdpOffer, rtpSdp, callback) {
 	clearCandidatesQueue(sessionId);
 
 	if (presenter !== null) {
@@ -205,32 +205,13 @@ function startPresenter(sessionId, ws, sdpOffer, callback) {
 
 			presenter.pipeline = pipeline;
 			pipeline.create('WebRtcEndpoint', function(error, webRtcEndpoint) {
-				if (error) {
-					stop(sessionId);
-					return callback(error);
-				}
-
-				if (presenter === null) {
-					stop(sessionId);
-					return callback(noPresenterMessage);
-				}
-
-				presenter.webRtcEndpoint = webRtcEndpoint;
-
-                if (candidatesQueue[sessionId]) {
-                    while(candidatesQueue[sessionId].length) {
-                        var candidate = candidatesQueue[sessionId].shift();
-                        webRtcEndpoint.addIceCandidate(candidate);
-                    }
-                }
-
-                webRtcEndpoint.on('OnIceCandidate', function(event) {
-                    var candidate = kurento.getComplexType('IceCandidate')(event.candidate);
-                    ws.send(JSON.stringify({
-                        id : 'iceCandidate',
-                        candidate : candidate
-                    }));
-                });
+				webRtcEndpoint.on('OnIceCandidate', function(event) {
+					var candidate = kurento.getComplexType('IceCandidate')(event.candidate);
+					ws.send(JSON.stringify({
+						id : 'iceCandidate',
+						candidate : candidate
+					}));
+				});
 
 				webRtcEndpoint.processOffer(sdpOffer, function(error, sdpAnswer) {
 					if (error) {
@@ -243,19 +224,286 @@ function startPresenter(sessionId, ws, sdpOffer, callback) {
 						return callback(noPresenterMessage);
 					}
 
+					pipeline.create('RtpEndpoint', function(error, rtpEndpoint) {
+						if (error) {
+							stop(sessionId);
+							return callback(error);
+						}
+
+						if (error) {
+							stop(sessionId);
+							return callback(error);
+						}
+
+						if (presenter === null) {
+							stop(sessionId);
+							return callback(noPresenterMessage);
+						}
+
+						presenter.webRtcEndpoint = webRtcEndpoint;
+
+						if (candidatesQueue[sessionId]) {
+							while(candidatesQueue[sessionId].length) {
+								var candidate = candidatesQueue[sessionId].shift();
+								webRtcEndpoint.addIceCandidate(candidate);
+							}
+						}
+
+						webRtcEndpoint.connect(rtpEndpoint, function(error, thing) {
+							if (error) {
+								pipeline.release();
+								return callback(error);
+							}
+
+							webRtcEndpoint.on('OnIceCandidate', function(event) {
+								var candidate = kurento.getComplexType('IceCandidate')(event.candidate);
+								ws.send(JSON.stringify({
+									id : 'iceCandidate',
+									candidate : candidate
+								}));
+							});
+
+							// console.log(rtpEndpoint);
+							
+
+							webRtcEndpoint.gatherCandidates(function(error) {
+								if (error) {
+									stop(sessionId);
+									return callback(error);
+								}
+							});
+						});
+
+						rtpEndpoint.processOffer(rtpSdp, function(error, rtpSdpAnswer) {
+							if (error) {
+								stop(sessionId);
+								return callback(error);
+							}
+
+							// if (presenter === null) {
+							// 	stop(sessionId);
+							// 	return callback(noPresenterMessage);
+							// }
+
+							// callback(null, sdpAnswer);
+							console.info("This is the RTP Sdp Offer: ");
+							console.info(rtpSdp);
+							console.info("This is the RTP Sdp Answer: ");
+							console.info(rtpSdpAnswer);
+
+							fs.writeFile('/Users/rlfrahm/Downloads/input.sdp', rtpSdp);
+						});
+					});
+
+					// var rtpSdp = generateSDP();
 					callback(null, sdpAnswer);
 				});
 
-                webRtcEndpoint.gatherCandidates(function(error) {
-                    if (error) {
-                        stop(sessionId);
-                        return callback(error);
-                    }
-                });
-            });
+				// pipeline.create('RtpEndpoint', function(error, rtpEndpoint) {
+				// 	if (error) {
+				// 		stop(sessionId);
+				// 		return callback(error);
+				// 	}
+
+				// 	if (error) {
+				// 		stop(sessionId);
+				// 		return callback(error);
+				// 	}
+
+				// 	if (presenter === null) {
+				// 		stop(sessionId);
+				// 		return callback(noPresenterMessage);
+				// 	}
+
+				// 	presenter.webRtcEndpoint = webRtcEndpoint;
+
+				// 	if (candidatesQueue[sessionId]) {
+				// 		while(candidatesQueue[sessionId].length) {
+				// 			var candidate = candidatesQueue[sessionId].shift();
+				// 			webRtcEndpoint.addIceCandidate(candidate);
+				// 		}
+				// 	}
+
+				// 	webRtcEndpoint.connect(rtpEndpoint, function(error, thing) {
+				// 		if (error) {
+				// 			pipeline.release();
+				// 			return callback(error);
+				// 		}
+
+				// 		webRtcEndpoint.on('OnIceCandidate', function(event) {
+				// 			var candidate = kurento.getComplexType('IceCandidate')(event.candidate);
+				// 			ws.send(JSON.stringify({
+				// 				id : 'iceCandidate',
+				// 				candidate : candidate
+				// 			}));
+				// 		});
+
+				// 		// console.log(rtpEndpoint);
+				// 		webRtcEndpoint.processOffer(sdpOffer, function(error, sdpAnswer) {
+				// 			if (error) {
+				// 				stop(sessionId);
+				// 				return callback(error);
+				// 			}
+
+				// 			if (presenter === null) {
+				// 				stop(sessionId);
+				// 				return callback(noPresenterMessage);
+				// 			}
+
+				// 			// var rtpSdp = generateSDP();
+				// 			rtpEndpoint.processOffer(rtpSdp, function(error, rtpSdpAnswer) {
+				// 				if (error) {
+				// 					stop(sessionId);
+				// 					return callback(error);
+				// 				}
+
+				// 				// if (presenter === null) {
+				// 				// 	stop(sessionId);
+				// 				// 	return callback(noPresenterMessage);
+				// 				// }
+
+				// 				// callback(null, sdpAnswer);
+				// 				console.info("This is the RTP Sdp Offer: ");
+				// 				console.info(rtpSdp);
+				// 				console.info("This is the RTP Sdp Answer: ");
+				// 				console.info(rtpSdpAnswer);
+
+				// 				fs.writeFile('/tmp/text.sdp', rtpSdpAnswer);
+				// 			});
+
+				// 			callback(null, sdpAnswer);
+				// 		});
+
+				// 		webRtcEndpoint.gatherCandidates(function(error) {
+				// 			if (error) {
+				// 				stop(sessionId);
+				// 				return callback(error);
+				// 			}
+				// 		});
+				// 	});
+				// });
+
+				// pipeline.create('RecorderEndpoint', {'mediaPipeline': pipeline, 'mediaProfile': 'MP4', 'stopOnEndOfStream': true, 'uri': 'file:///tmp/video.mp4'}, function(error, recorderEndpoint) {
+				// 	console.log(recorderEndpoint);
+				// 	if (error) {
+				// 		console.log('Error', error);
+				// 		stop(sessionId);
+				// 		return callback(error);
+				// 	}
+				// 	// console.log(rtpEndpoint);
+				// 	webRtcEndpoint.processOffer(sdpOffer, function(error, sdpAnswer) {
+				// 		if (error) {
+				// 			stop(sessionId);
+				// 			return callback(error);
+				// 		}
+
+				// 		if (presenter === null) {
+				// 			stop(sessionId);
+				// 			return callback(noPresenterMessage);
+				// 		}
+				// 		webRtcEndpoint.connect(recorderEndpoint, function(error, thing) {
+				// 			// console.log(error, thing);
+
+				// 			// rtpEndpoint.processOffer(generateSDP(), function(error, sdpAnswer) {
+				// 			// 	if (error) {
+				// 			// 		stop(sessionId);
+				// 			// 		return callback(error);
+				// 			// 	}
+
+				// 			// 	// if (presenter === null) {
+				// 			// 	// 	stop(sessionId);
+				// 			// 	// 	return callback(noPresenterMessage);
+				// 			// 	// }
+
+				// 			// 	// callback(null, sdpAnswer);
+				// 			// 	console.log(sdpAnswer);
+				// 			// });
+				// 			recorderEndpoint.record(function(name) {
+				// 				console.log('Name: ' + name);
+				// 			});
+				// 		});
+				// 		callback(null, sdpAnswer);
+				// 	});
+				// });
+			});
         });
 	});
 }
+
+// var ffmpeg = require('ffmpeg.js');
+// var stdout = "";
+// var stderr = "";
+// ffmpeg({
+//   arguments: ["-version"],
+//   print: function(data) { stdout += data + "\n"; },
+//   printErr: function(data) { stderr += data + "\n"; },
+//   onExit: function(code) {
+//     console.log("Process exited with code " + code);
+//     console.log(stdout);
+//   },
+// });
+
+function createMediaElements(pipeline, callback) {
+
+     pipeline.create('RtpEndpoint', function(error, rtpEp) {
+         if (error) return callback(error);
+
+         pipeline.create('WebRtcEndpoint', function(error, webRtc) {
+             if (error) return callback(error);
+             return callback(null, rtpEp, webRtc);
+         });
+     });
+ }
+
+ function connectMediaElements(rtpEp, webRtc, callback) {
+     rtpEp.connect(webRtc, function(error) {
+         if (error) return callback(error);
+     });
+     return callback(null);
+ }
+
+ function generateSDP() {
+     var sdp_rtp = '';
+     /*
+    //VLC DUMMY MODULE
+    sdp_rtp += 'v=0\r\n';
+    sdp_rtp += 'o=- 0 0 IN IP4 127.0.0.1\r\n';
+    sdp_rtp += 's=No Name\r\n';
+    sdp_rtp += 'c=IN IP4 127.0.0.1\r\n';
+    sdp_rtp += 't=0 0\r\n';
+    sdp_rtp += 'tool:libavformat 56.4.101\r\n';
+    sdp_rtp += 'm=video 5004 RTP/AVP 96\r\n';
+    sdp_rtp += 'b=AS:10\r\n';
+    sdp_rtp += 'a=rtpmap:96 H264/90000\r\n';
+    sdp_rtp += 'a=fmtp:96 packetization-mode=1\r\n';
+ */
+     //SDP FROM IVAN GARCIA
+    //  sdp_rtp += 'v=0\r\n';
+    //  sdp_rtp += 'o=- 0 0 IN IP4 127.0.0.1\r\n';
+    //  sdp_rtp += 's=\r\n';
+    //  sdp_rtp += 'c=IN IP4 127.0.0.1\r\n';
+    //  sdp_rtp += 't=0 0\r\n';
+    //  sdp_rtp += 'm=video 5004 RTP/AVP 100\r\n';
+    //  sdp_rtp += 'a=rtpmap:100 H264/90000\r\n';
+    //  sdp_rtp += 'a=recvonly\r\n';
+
+
+     //VLC SDP
+     sdp_rtp += 'v=0\r\n';
+     sdp_rtp += 'o=- 15651736854259072773 15651736854259072773 IN IP4 antonio-Lenovo-G585\r\n';
+     sdp_rtp += 's=Unnamed\r\n';
+     sdp_rtp += 'i=N/A\r\n';
+     sdp_rtp += 'c=IN IP4 127.0.0.1\r\n';
+     sdp_rtp += 't=0 0\r\n';
+     sdp_rtp += 'a=tool:vlc 2.1.6\r\n';
+     sdp_rtp += 'a=recvonly\r\n';
+     sdp_rtp += 'a=type:broadcast\r\n';
+     sdp_rtp += 'a=charset:UTF-8\r\n';
+     sdp_rtp += 'm=video 5004 RTP/AVP 33\r\n';
+     sdp_rtp += 'b=RR:0\r\n';
+     sdp_rtp += 'a=rtpmap:33 MP2T/90000\r\n';
+     return sdp_rtp;
+ }
 
 function startViewer(sessionId, ws, sdpOffer, callback) {
 	clearCandidatesQueue(sessionId);
@@ -355,8 +603,9 @@ function stop(sessionId) {
 	clearCandidatesQueue(sessionId);
 
 	if (viewers.length < 1 && !presenter) {
-        console.log('Closing kurento client');
-        kurentoClient.close();
+		// console.log('Closing kurento client');
+		if (kurentoClient)
+        	kurentoClient.close();
         kurentoClient = null;
     }
 }

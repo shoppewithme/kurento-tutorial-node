@@ -1,0 +1,7 @@
+v=0
+o=- 0 0 IN IP4 127.0.0.1
+s=Kurento
+c=IN IP4 127.0.0.1
+t=0 0
+m=video 33124 RTP/AVP 100
+a=rtpmap:100 H264/90000
