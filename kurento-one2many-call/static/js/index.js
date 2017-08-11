@@ -92,11 +92,25 @@ function presenter() {
 }
 
 function onOfferPresenter(error, offerSdp) {
-    if (error) return onError(error);
+	if (error) return onError(error);
+	console.log(new Date().toString(), ' onOfferPresenter');
+
+	var rtpSdp = 'v=0\n';
+	rtpSdp += 'o=- 0 0 IN IP4 35.161.70.128\n';
+	rtpSdp += 's=Kurento\n';
+	rtpSdp += 'c=IN IP4 35.161.70.128\n';
+	rtpSdp += 't=0 0\n';
+	rtpSdp += 'm=audio 16381 RTP/AVP 0\n';
+	rtpSdp += 'a=recvonly\n';
+	rtpSdp += 'a=rtpmap:0 PCMU/8000\n';
+	rtpSdp += 'm=video 16381 RTP/AVP 98\n';
+	rtpSdp += 'a=recvonly\n';
+	rtpSdp += 'a=rtpmap:98 H264/90000';
 
 	var message = {
 		id : 'presenter',
-		sdpOffer : offerSdp
+		sdpOffer : offerSdp,
+		rtpSdp: rtpSdp,
 	};
 	sendMessage(message);
 }
